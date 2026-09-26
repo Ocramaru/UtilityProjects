@@ -18,6 +18,6 @@ So I made a quick macOS workflow that gives me the same feature: right-click, ch
 
 This is a Python script that basically just lets you insert an audio file and it will output a transcription. I made this for the occasional business class that assigned me a 60-minute podcast as homework that I *really* did not want to listen to all of. So I would transcribe it, listen to a little bit of it, and then use Control-F to find and quote what I wanted to talk about.
 
-## VS Code SSH Bridge (Go)
+## [VS Code SSH Bridge](vcode-bridge/)
 
-I made this because a normal SSH terminal knows the remote folder I am standing in, but VS Code on my Mac does not. The bridge listens on an owner-only Unix socket, receives the absolute folder path through an SSH socket forward, and opens that folder with VS Code Remote SSH. It occupies no TCP port and never evaluates the remote path through a shell.
+I created this to let me open an SSH project back in my VS Code instance using the Remote SSH feature on my Mac. There wasn’t an easy way for me to just run `code .` inside a normal SSH session and have it open, so I made a quick Go bridge that wraps the `vcode` command, sends the remote path back through a Unix socket, and triggers VS Code to open it through Remote SSH.
