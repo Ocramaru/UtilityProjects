@@ -17,3 +17,7 @@ So I made a quick macOS workflow that gives me the same feature: right-click, ch
 # WhisperKit Transcribe
 
 This is a Python script that basically just lets you insert an audio file and it will output a transcription. I made this for the occasional business class that assigned me a 60-minute podcast as homework that I *really* did not want to listen to all of. So I would transcribe it, listen to a little bit of it, and then use Control-F to find and quote what I wanted to talk about.
+
+## VS Code SSH Bridge (Go)
+
+I made this because a normal SSH terminal knows the remote folder I am standing in, but VS Code on my Mac does not. The bridge listens on an owner-only Unix socket, receives the absolute folder path through an SSH socket forward, and opens that folder with VS Code Remote SSH. It occupies no TCP port and never evaluates the remote path through a shell.
