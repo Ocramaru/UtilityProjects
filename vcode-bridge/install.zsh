@@ -15,10 +15,20 @@ socket_path="$app_dir/vcode-bridge.sock"
 launch_agent="$HOME/Library/LaunchAgents/info.marcocassar.vcode-bridge.plist"
 service="gui/$UID/info.marcocassar.vcode-bridge"
 
-if [[ -z "$ssh_host" || "$ssh_host" == *[^A-Za-z0-9._-]* ]]; then
+if [[ -z "$ssh_host" || "$ssh_host" == -* || "$ssh_host" == *[^A-Za-z0-9._-]* ]]; then
   print -u2 "SSH host aliases may contain only letters, numbers, dots, underscores, and hyphens."
   exit 2
 fi
+ssh_config=$(/usr/bin/ssh -G "$ssh_host")
+if print -r -- "$ssh_config" | /usr/bin/grep -Eq '^(remoteforward|localforward|dynamicforward) '; then
+  print -u2 "Remove forwarding directives from Host $ssh_host before installing."
+  print -u2 "The background bridge now owns the tunnel; ordinary SSH sessions do not need forwarding."
+  exit 1
+fi
+# Establish trust/authentication before starting an unattended service. This
+# deliberately permits prompts during installation, never in the daemon.
+/usr/bin/ssh -S none -T -o ClearAllForwardings=yes -o ControlMaster=no \
+  -o ControlPersist=no "$ssh_host" true
 if ! command -v go >/dev/null 2>&1; then
   print -u2 "Go is not installed. Install it first with: brew install go"
   exit 1
@@ -75,7 +85,8 @@ PLIST
 chmod 755 "$binary_path"
 chmod 644 "$launch_agent"
 launchctl bootstrap "gui/$UID" "$launch_agent"
-launchctl kickstart -k "$service"
 
-print "Installed and started vcode-bridge for SSH host: $ssh_host"
+print "Installed and started vcode-bridge with an automatically maintained tunnel to: $ssh_host"
+print "Remote SSH server prerequisite: StreamLocalBindUnlink yes (see README)."
+print "No forwarding settings or dedicated terminal are needed for normal SSH sessions."
 print "Health check: curl --unix-socket '$socket_path' -fsS http://localhost/health"
