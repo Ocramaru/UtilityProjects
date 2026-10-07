@@ -1,2 +1,11 @@
 /data/
 /temp_images/
+
+# machine-specific or secret files never belong in this public repo
+.env
+.env.*
+*.local
+*.bak
+*.bak.*
+*.pem
+*.key

@@ -21,3 +21,7 @@ This is a Python script that basically just lets you insert an audio file and it
 ## [VS Code SSH Bridge](vcode-bridge/)
 
 I created this to let me open an SSH project back in my VS Code instance using the Remote SSH feature on my Mac. There wasn’t an easy way for me to just run `code .` inside a normal SSH session and have it open, so I made a quick Go bridge that wraps the `vcode` command, sends the remote path back through a Unix socket, and triggers VS Code to open it through Remote SSH.
+
+## [Device Terminal Setup](device-terminal-setup/)
+
+I kept rebuilding the same shell by hand every time I got a new machine, so this script does it for me: zsh, Oh My Zsh, starship, mise, uv, tmux and my Nerd Fonts, with the dotfiles symlinked back into this repo so a tweak on one machine shows up everywhere.

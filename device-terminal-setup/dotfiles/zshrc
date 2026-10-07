@@ -1,0 +1,18 @@
+# Managed by UtilityProjects/device-terminal-setup. Machine-specific lines go in ~/.zshrc.local.
+# Each tool loads only if it is installed, so install.sh --skip leaves a working shell.
+
+# starship, mise and uv install into ~/.local/bin
+export PATH="$HOME/.local/bin:$PATH"
+
+export ZSH="$HOME/.oh-my-zsh"
+ZSH_THEME="robbyrussell"
+plugins=(git)
+[[ -f $ZSH/oh-my-zsh.sh ]] && source $ZSH/oh-my-zsh.sh
+
+(( $+commands[starship] )) && eval "$(starship init zsh)"
+(( $+commands[mise] )) && eval "$(mise activate zsh)"
+
+# Fixes Ghostty terminal issue where delete key doesnt work on remote hosts
+export TERM=xterm-256color
+
+[[ -f ~/.zshrc.local ]] && source ~/.zshrc.local
