@@ -26,6 +26,7 @@ NERD_FONTS_VERSION="v3.4.0"
 COMPONENTS=" packages starship mise uv dotfiles ohmyzsh shell fonts agents "
 DRY_RUN=0
 UNINSTALL=0
+OLD_CLONE=""
 SKIP=" "
 
 usage() {
@@ -166,6 +167,12 @@ install_dotfile() {
   if managed "$destination"; then
     run "Updated $(tilde "$destination") to $VERSION, keeping your lines" copy_dotfile "$source" "$destination"
     return 0
+  fi
+  # Before 0.1.0 the dotfiles were links into a clone of the repo; those are the setup's own, so they need no backup.
+  if [[ -L "$destination" && "$(readlink "$destination")" == */device-terminal-setup/dotfiles/* ]]; then
+    OLD_CLONE="$(readlink "$destination")"
+    OLD_CLONE="${OLD_CLONE%/device-terminal-setup/dotfiles/*}"
+    run "Replaced the old link $(tilde "$destination")" rm "$destination"
   fi
   if [[ -e "$destination" || -L "$destination" ]]; then
     backup="$(free_backup "$destination")"
@@ -454,5 +461,6 @@ if (( DRY_RUN )); then
   info "Dry run finished; nothing changed"
 else
   mkdir -p "$STATE" && echo "$VERSION" > "$STATE/version"
+  if [[ -n "$OLD_CLONE" && -d "$OLD_CLONE/.git" ]]; then info "Nothing links into $(tilde "$OLD_CLONE") any more; delete it if you do not use it otherwise"; fi
   printf '%sReady: device-terminal-setup %s, open a new terminal%s\n' "$GREEN" "$VERSION" "$RESET"
 fi
