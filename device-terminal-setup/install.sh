@@ -4,6 +4,10 @@
 # Author: Marco Cassar (@Ocramaru)
 set -euo pipefail
 
+# The braces make bash read the whole file before running any of it: under curl | bash an early exit
+# would otherwise cut the download short, and a partial download fails to parse rather than half running.
+{
+
 ARCHIVE="https://github.com/Ocramaru/UtilityProjects/archive/refs/heads/main.tar.gz"
 SETUP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-.}")" && pwd)"
 
@@ -20,24 +24,27 @@ DOTFILES="$SETUP_DIR/dotfiles"
 VERSION="$(cat "$SETUP_DIR/VERSION")"
 MARKER="# Managed by device-terminal-setup"
 YOURS="# ---- Your lines: everything below here is kept on update ----"
-STATE="$HOME/.local/state/device-terminal-setup"
-LOCAL_BIN="$HOME/.local/bin"
 NERD_FONTS_VERSION="v3.4.0"
 COMPONENTS=" packages starship mise uv dotfiles ohmyzsh shell fonts agents "
-DRY_RUN=0
-UNINSTALL=0
-OLD_CLONE=""
-SKIP=" "
+LINUX_PACKAGES="zsh git curl ca-certificates jq gh tmux"
+DRY_RUN=0 UNINSTALL=0 NO_SUDO=0 ONLY_SET=0 CHOSEN=0 SHOW_VERSION=0
+CONTAINER=auto HOME_DIR="" WORKDIR="" OLD_CLONE="" SKIP=" "
+USER="${USER:-$(id -un)}"  # containers often leave USER unset
 
 usage() {
   cat <<EOF
-usage: $0 [--dry-run] [--uninstall] [--skip LIST] [--only LIST] [--version]
+usage: $0 [options]
 
-  --dry-run    print every command it would run and change nothing
-  --uninstall  remove what the install added, for the chosen components
-  --skip LIST  leave out these comma separated components
-  --only LIST  act on just these comma separated components
-  --version    print this version and the installed one
+  --dry-run         print every command it would run and change nothing
+  --uninstall       remove what the install added, for the chosen components
+  --skip LIST       leave out these comma separated components
+  --only LIST       act on just these comma separated components
+  --home DIR        install into DIR, such as a persistent volume, and write DIR/start.sh to link it into each new container
+  --workdir DIR     where start.sh opens the shell (default: the parent of HOME)
+  --container       treat this machine as a container: skip shell, fonts and agents
+  --no-container    treat it as a normal machine (default: detected)
+  --no-sudo         never use sudo; root-only steps run directly as root or are skipped
+  --version         print this version and the installed one
 
 components:$COMPONENTS
 EOF
@@ -57,20 +64,47 @@ while (( $# )); do
   case "$1" in
     --dry-run) DRY_RUN=1 ;;
     --uninstall) UNINSTALL=1 ;;
-    --skip) read_list "${2:-}"; SKIP+="$LIST"; shift ;;
+    --skip) read_list "${2:-}"; SKIP+="$LIST"; CHOSEN=1; shift ;;
+    --home) HOME_DIR="${2:?--home needs a directory}"; shift ;;
+    --workdir) WORKDIR="${2:?--workdir needs a directory}"; shift ;;
+    --container) CONTAINER=1 ;;
+    --no-container) CONTAINER=0 ;;
+    --no-sudo) NO_SUDO=1 ;;
     --only)
+      ONLY_SET=1 CHOSEN=1
       read_list "${2:-}"
       for component in $COMPONENTS; do
         [[ " $LIST" == *" $component "* ]] || SKIP+="$component "
       done
       shift
       ;;
-    --version) echo "device-terminal-setup $VERSION (installed: $(cat "$STATE/version" 2>/dev/null || echo none))"; exit ;;
+    --version) SHOW_VERSION=1 ;;
     -h|--help) usage; exit 0 ;;
     *) usage >&2; exit 2 ;;
   esac
   shift
 done
+
+if [[ -n "$HOME_DIR" ]]; then
+  [[ "$HOME_DIR" == /* ]] || HOME_DIR="$PWD/$HOME_DIR"
+  if (( ! DRY_RUN )); then mkdir -p "$HOME_DIR"; fi
+  export HOME="$HOME_DIR"
+fi
+WORKDIR="${WORKDIR:-$(dirname "$HOME")}"
+STATE="$HOME/.local/state/device-terminal-setup"
+LOCAL_BIN="$HOME/.local/bin"
+
+if (( SHOW_VERSION )); then echo "device-terminal-setup $VERSION (installed: $(cat "$STATE/version" 2>/dev/null || echo none))"; exit; fi
+
+in_container() { [[ -f /.dockerenv || -f /run/.containerenv || -n "${KUBERNETES_SERVICE_HOST:-}" || -n "${container:-}" ]]; }
+if [[ "$CONTAINER" == auto ]]; then
+  if in_container; then CONTAINER=1; else CONTAINER=0; fi
+fi
+# The login shell, fonts and agent hooks belong to the machine you type on; --only still picks them.
+if (( CONTAINER && ! ONLY_SET )); then SKIP+="shell fonts agents "; fi
+# A setup on a persistent volume gets a launcher that links it into each new container.
+LAUNCHER=0
+if [[ -n "$HOME_DIR" ]]; then LAUNCHER=1; fi
 
 wants() { [[ "$SKIP" != *" $1 "* ]]; }
 
@@ -103,6 +137,19 @@ run() {
   fi
 }
 
+# Runs a command as root: directly when already root, through sudo unless --no-sudo, and otherwise skips it.
+run_privileged() {
+  local message="$1"
+  shift
+  if (( EUID == 0 )); then
+    run "$message" "$@"
+  elif (( ! NO_SUDO )) && have sudo; then
+    run "$message" sudo "$@"
+  else
+    warn "Skipped, needs root: $*"
+  fi
+}
+
 detect_platform() {
   step "Platform"
   OS="$(uname -s)"
@@ -113,6 +160,8 @@ detect_platform() {
   esac
   ok "$OS $(uname -m), device-terminal-setup $VERSION"
   if (( DRY_RUN )); then info "Dry run: nothing will change"; fi
+  if (( CONTAINER )); then info "Container: shell, fonts and agents are left out unless named with --only"; fi
+  if [[ -n "$HOME_DIR" ]]; then info "HOME is $HOME"; fi
   if [[ "$SKIP" != " " ]]; then info "Skipping:$SKIP"; fi
 }
 
@@ -122,9 +171,20 @@ recorded() { grep -qxF "$*" "$STATE/installed" 2>/dev/null; }
 
 ## Dotfiles: copied in with the version stamped into their first line, keeping your lines below the YOURS line
 
-managed() { [[ -f "$1" && ! -L "$1" ]] && head -n 1 "$1" | grep -q "^$MARKER "; }
+# The managed line is first, or second after a #! line.
+managed() { [[ -f "$1" && ! -L "$1" ]] && head -n 2 "$1" | grep -q "^$MARKER "; }
 
-stamped() { sed "1s/^$MARKER dev:/$MARKER $VERSION:/" "$1"; }
+# A link to a managed file is a setup on a volume linked in by its start.sh; that setup is updated through --home.
+linked_setup() { [[ -L "$1" ]] && managed "$(readlink "$1")"; }
+
+# The setup home a linked dotfile comes from: its link target without its path under HOME.
+setup_home_of() {
+  local target
+  target="$(readlink "$1")"
+  printf '%s' "${target%/"${1#"$HOME"/}"}"
+}
+
+stamped() { sed -e "1,2s/^$MARKER dev:/$MARKER $VERSION:/" -e "s|@HOME@|$HOME|g" -e "s|@WORKDIR@|$WORKDIR|g" -e "s|@PACKAGES@|$LINUX_PACKAGES|g" "$1"; }
 
 # The line number of the YOURS line in $1, or nothing when it has none.
 yours_at() { grep -nxF "$YOURS" "$1" | head -n 1 | cut -d: -f1; }
@@ -147,6 +207,7 @@ setup_part() {
 copy_dotfile() {
   { stamped "$1"; if managed "$2"; then your_lines "$2"; fi; } > "$2.new"
   mv "$2.new" "$2"
+  if [[ -x "$1" ]]; then chmod 755 "$2"; fi
 }
 
 # The first free name among $1.bak, $1.bak.1, $1.bak.2, ...
@@ -159,6 +220,10 @@ free_backup() {
 # Copies a dotfile into place. Anything there that the setup did not write is moved aside first, and the move is recorded for --uninstall.
 install_dotfile() {
   local source="$DOTFILES/$1" destination="$2" backup
+  if linked_setup "$destination"; then
+    ok "$(tilde "$destination") links to $(readlink "$destination"); update that setup with --home $(setup_home_of "$destination")"
+    return 0
+  fi
   if managed "$destination" && cmp -s <(stamped "$source") <(setup_part "$destination"); then
     ok "$(tilde "$destination") is up to date"
     return 0
@@ -185,6 +250,10 @@ install_dotfile() {
 # Removes a dotfile the setup wrote and puts back the file the install moved aside for it. A file with your lines in it is moved aside instead, so they are not lost.
 uninstall_dotfile() {
   local destination="$1" backup
+  if linked_setup "$destination"; then
+    ok "$(tilde "$destination") links to $(readlink "$destination"); uninstall that setup with --home $(setup_home_of "$destination")"
+    return 0
+  fi
   if managed "$destination" && [[ -n "$(your_lines "$destination" | tr -d '[:space:]')" ]]; then
     backup="$(free_backup "$destination")"
     run "Moved $(tilde "$destination"), which has your lines, to $(tilde "$backup")" mv "$destination" "$backup"
@@ -212,7 +281,8 @@ install_packages() {
   step "System packages"
   local packages missing=() package
   if [[ "$OS" == Linux ]]; then
-    packages=(zsh git curl jq gh tmux fontconfig xz-utils)
+    read -r -a packages <<<"$LINUX_PACKAGES"
+    if wants fonts; then packages+=(fontconfig xz-utils); fi
   else
     if ! have brew; then
       (( DRY_RUN )) || die "Homebrew is missing; install it from https://brew.sh first"
@@ -226,9 +296,13 @@ install_packages() {
   done
   (( ${#missing[@]} )) || return 0
   if [[ "$OS" == Linux ]]; then
-    info "apt installs ${missing[*]} with sudo"
-    run "Updated apt" sudo apt-get update
-    run "Installed ${missing[*]}" sudo apt-get install -y "${missing[@]}"
+    # Package lists under a day old are current enough; a fresh container has none and always updates.
+    if [[ -n "$(find /var/lib/apt/lists -maxdepth 1 -name '*Packages*' -mmin -1440 2>/dev/null | head -n 1)" ]]; then
+      ok "apt package lists are recent"
+    else
+      run_privileged "Updated apt" env DEBIAN_FRONTEND=noninteractive apt-get update
+    fi
+    run_privileged "Installed ${missing[*]}" env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${missing[@]}"
   else
     run "Installed ${missing[*]}" brew install "${missing[@]}"
   fi
@@ -272,6 +346,7 @@ install_dotfiles() {
   install_dotfile tmux.conf "$HOME/.tmux.conf"
   # Ghostty runs on the machine you type on: the Mac, or a Linux desktop that has it
   if [[ "$OS" == Darwin ]] || have ghostty; then install_dotfile ghostty.config "$HOME/.config/ghostty/config"; fi
+  if (( LAUNCHER )); then install_dotfile start.sh "$HOME/start.sh"; fi
 }
 
 # Runs after the dotfiles, so --keep-zshrc keeps the managed .zshrc instead of the template.
@@ -291,7 +366,9 @@ current_shell() {
 
 # Images with passwordless sudo often give the user no password for chsh to ask for.
 change_shell() {
-  if sudo -n true 2>/dev/null; then
+  if (( EUID == 0 )); then
+    run "Login shell set to $1" chsh -s "$1" "$USER"
+  elif (( ! NO_SUDO )) && sudo -n true 2>/dev/null; then
     run "Login shell set to $1" sudo chsh -s "$1" "$USER"
   else
     info "chsh asks for your password"
@@ -372,7 +449,7 @@ uninstall_tool() {
     ok "$name was not installed by this setup; left alone"
     return 1
   fi
-  run "Removed $name from ~/.local/bin" rm -f "$@"
+  run "Removed $name from ~/.local/bin" rm -rf "$@"
 }
 
 uninstall_component() {
@@ -384,7 +461,7 @@ uninstall_component() {
     starship)
       step "starship"
       uninstall_dotfile "$HOME/.config/starship.toml"
-      uninstall_tool starship "$LOCAL_BIN/starship" || true
+      uninstall_tool starship "$LOCAL_BIN/starship" "$HOME/.cache/starship" || true
       ;;
     mise)
       step "mise"
@@ -395,17 +472,18 @@ uninstall_component() {
       ;;
     uv)
       step "uv"
-      uninstall_tool uv "$LOCAL_BIN/uv" "$LOCAL_BIN/uvx" || true
+      uninstall_tool uv "$LOCAL_BIN/uv" "$LOCAL_BIN/uvx" "$HOME/.config/uv/uv-receipt.json" || true
       ;;
     dotfiles)
       step "Dotfiles"
       uninstall_dotfile "$HOME/.zshrc"
       uninstall_dotfile "$HOME/.tmux.conf"
       uninstall_dotfile "$HOME/.config/ghostty/config"
+      uninstall_dotfile "$HOME/start.sh"
       ;;
     ohmyzsh)
       step "Oh My Zsh"
-      if recorded ohmyzsh; then run "Removed Oh My Zsh" rm -rf "$HOME/.oh-my-zsh"; else ok "Oh My Zsh was not installed by this setup; left alone"; fi
+      if recorded ohmyzsh; then run "Removed Oh My Zsh and its completion caches" rm -rf "$HOME/.oh-my-zsh" "$HOME"/.zcompdump*; else ok "Oh My Zsh was not installed by this setup; left alone"; fi
       ;;
     shell)
       step "Login shell"
@@ -440,7 +518,13 @@ if (( UNINSTALL )); then
   for component in agents fonts shell ohmyzsh dotfiles uv mise starship packages; do
     if wants "$component"; then uninstall_component "$component"; fi
   done
-  if [[ "$SKIP" == " " ]]; then run "Removed $(tilde "$STATE")" rm -rf "$STATE"; fi
+  if (( ! CHOSEN )); then run "Removed $(tilde "$STATE")" rm -rf "$STATE"; fi
+  # Folders the install created and left empty; rmdir keeps any that hold something
+  if (( ! DRY_RUN )); then
+    for folder in .config/mise .config/uv .config/ghostty .cache .local/bin .local/share .local/state .config .local; do
+      rmdir "$HOME/$folder" 2>/dev/null || true
+    done
+  fi
   step "Done"
   if (( DRY_RUN )); then info "Dry run finished; nothing changed"; else printf '%sUninstalled: open a new terminal%s\n' "$GREEN" "$RESET"; fi
   exit
@@ -462,5 +546,8 @@ if (( DRY_RUN )); then
 else
   mkdir -p "$STATE" && echo "$VERSION" > "$STATE/version"
   if [[ -n "$OLD_CLONE" && -d "$OLD_CLONE/.git" ]]; then info "Nothing links into $(tilde "$OLD_CLONE") any more; delete it if you do not use it otherwise"; fi
+  if (( LAUNCHER )) && wants dotfiles; then info "On a fresh container, start with: $HOME/start.sh (kubectl exec -it <pod> -- $HOME/start.sh)"; fi
   printf '%sReady: device-terminal-setup %s, open a new terminal%s\n' "$GREEN" "$VERSION" "$RESET"
 fi
+
+}

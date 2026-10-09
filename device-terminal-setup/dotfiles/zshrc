@@ -1,6 +1,7 @@
 # Managed by device-terminal-setup dev: updates replace everything above the "Your lines" line at the end
 # Machine-specific lines go in ~/.zshrc.local.
 # Each tool loads only if it is installed, so install.sh --skip leaves a working shell.
+# Author: Marco Cassar (@Ocramaru)
 
 # starship, mise and uv install into ~/.local/bin
 export PATH="$HOME/.local/bin:$PATH"

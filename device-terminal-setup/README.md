@@ -21,9 +21,13 @@ On macOS it needs [Homebrew](https://brew.sh). From a checkout, `device-terminal
 | `--skip mise,fonts` | leaves those components out |
 | `--only fonts` | acts on just those components |
 | `--uninstall` | removes what the install added, for the chosen components |
+| `--home DIR` | installs into `DIR`, such as a persistent volume, and writes `DIR/start.sh` |
+| `--workdir DIR` | where `start.sh` opens the shell (default: the parent of `HOME`) |
+| `--container`, `--no-container` | forces container mode on or off (default: detected) |
+| `--no-sudo` | never uses sudo; steps that need root run directly as root or are skipped |
 | `--version` | prints this version and the installed one |
 
-The script uses sudo only for apt and, where sudo needs no password, to change the login shell; it says so before it does.
+Steps that need root (apt, and changing the login shell) run directly when you are root, through sudo otherwise, and are skipped with a warning when neither is possible. `--dry-run` shows which.
 
 ## Updating and uninstalling
 
@@ -37,17 +41,33 @@ The managed `.zshrc` loads Oh My Zsh, starship and mise only when they are insta
 
 | Component | What it installs | Disk, roughly |
 |---|---|---|
-| `packages` | apt: zsh git curl jq gh tmux fontconfig xz-utils, or brew: git jq gh tmux | 90 MB, mostly git and gh, often already there |
+| `packages` | apt: zsh git curl ca-certificates jq gh tmux, plus fontconfig and xz-utils when installing fonts; or brew: git jq gh tmux | 90 MB, mostly git and gh, often already there |
 | `starship` | starship into `~/.local/bin`, and its config | 10 MB |
 | `mise` | mise into `~/.local/bin`, its config, and the tools it lists (just fzf) | 90 MB |
 | `uv` | uv into `~/.local/bin` | 45 MB |
-| `dotfiles` | `.zshrc`, `.tmux.conf`, and the Ghostty config on a Mac or wherever Ghostty is installed | none |
+| `dotfiles` | `.zshrc`, `.tmux.conf`, the Ghostty config on a Mac or wherever Ghostty is installed, and `start.sh` with `--home` | none |
 | `ohmyzsh` | Oh My Zsh, unattended, keeping the managed `.zshrc` | 18 MB |
 | `shell` | `chsh` to zsh | none |
 | `fonts` | Nerd Fonts v3.4.0 into `~/.local/share/fonts/nerdfonts` (then `fc-cache`) or `~/Library/Fonts` | 19 MB, a 5 MB download |
 | `agents` | runs `~/.agents/bin/agent install`; skipped when `~/.agents` is not cloned | none |
 
 Everything together is about 270 MB, and most of that is mise, uv and the apt packages. A new shell starts in under 0.1 s on my machine with all of it loaded.
+
+## Containers and clusters
+
+Nothing here applies to a normal machine. In a container (detected from `/.dockerenv`, `/run/.containerenv`, `KUBERNETES_SERVICE_HOST` or `$container`, or forced with `--container`), the plain curl line installs as root without sudo and leaves out `shell`, `fonts` and `agents`, which belong to the machine you type on.
+
+A pod loses everything outside its persistent volume. To keep the setup across pods, install it onto the volume once:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Ocramaru/UtilityProjects/main/device-terminal-setup/install.sh | bash -s -- --home /data/home
+```
+
+That writes `/data/home/start.sh`. Run it in each new pod (`kubectl exec -it <pod> -- /data/home/start.sh`). It links the setup on the volume into the pod's own `HOME`, merging into folders the image already has and keeping `.config` and `.local` as local folders, so what other tools write there (`pip install --user`, for one) stays in the pod; reinstalls the system packages when the image lacks zsh; opens in the parent of `/data/home` (or `--workdir`); and starts zsh. Lines you add below its "Your lines" line run before zsh starts.
+
+`HOME` itself stays on the pod's local disk. On network storage such as CephFS, zsh's completion cache and Oh My Zsh's many small writes are slow enough to look hung, while reading the linked setup is fast. Caches and history are never linked for the same reason, and Oh My Zsh's cache goes to `~/.cache`.
+
+To update or uninstall, run the installer with the same `--home /data/home`. Run inside a pod with its default `HOME`, it leaves the linked files alone and says which `--home` to use.
 
 ## Machine-specific lines
 
