@@ -2,29 +2,24 @@
 
 This is my terminal setup, packaged so a new machine matches the old one: zsh with Oh My Zsh and starship, mise, uv, tmux, the usual CLI tools, and the ComicShannsMono and Symbols Nerd Fonts. It runs on Ubuntu (aarch64 and x86_64) and on macOS through Homebrew. Anyone is welcome to use it; fork it first if you want to change the dotfiles.
 
-The files in `dotfiles/` are symlinked into place, so editing `~/.zshrc` edits the repo. Anything already in the way is moved to a numbered `.bak` first, never overwritten. Running it again reports `ok` for every step already done.
+The files in `dotfiles/` are symlinked into place, so editing `~/.zshrc` edits the repo. Anything already in the way is moved to a numbered `.bak` first, never overwritten. Running it again leaves finished steps alone and says so.
 
 ## Running it
 
-1. Install git. On Ubuntu that is `sudo apt-get install -y git`. On macOS, install [Homebrew](https://brew.sh) first.
-2. Clone this repo anywhere and preview what it would do:
+Preview, then run:
 
-   ```bash
-   git clone https://github.com/Ocramaru/UtilityProjects.git
-   UtilityProjects/device-terminal-setup/install.sh --dry-run
-   ```
+```bash
+curl -fsSL https://raw.githubusercontent.com/Ocramaru/UtilityProjects/main/device-terminal-setup/install.sh | bash -s -- --dry-run
+curl -fsSL https://raw.githubusercontent.com/Ocramaru/UtilityProjects/main/device-terminal-setup/install.sh | bash
+```
 
-3. Run it for real, leaving out anything you do not want:
+The first real run clones this repo to `~/UtilityProjects` (set `UTILITY_PROJECTS` to put it elsewhere) and runs from there, since the dotfiles link into it; keep the clone. Later runs use that clone, and `git pull` in it updates the dotfiles. It needs git, and on macOS [Homebrew](https://brew.sh). From an existing clone, `device-terminal-setup/install.sh` does the same.
 
-   ```bash
-   UtilityProjects/device-terminal-setup/install.sh --skip mise,fonts
-   ```
-
-The script uses sudo only for apt, and says so before it does. `chsh` asks for your password if the login shell is not zsh yet. Open a new terminal when it finishes. Keep the clone where it is afterwards, since the dotfiles link back into it.
+Options go after `bash -s --`: `--skip mise,fonts` leaves components out, `--only fonts` installs just those, and `--dry-run` lists every command without running it. The script uses sudo only for apt, and says so before it does. `chsh` asks for your password if the login shell is not zsh yet.
 
 ## Components
 
-`--skip a,b` leaves components out and `--only a,b` installs just those. The managed `.zshrc` loads Oh My Zsh, starship and mise only when they are installed, so any combination leaves a working shell.
+The managed `.zshrc` loads Oh My Zsh, starship and mise only when they are installed, so any combination leaves a working shell.
 
 | Component | What it installs | Disk, roughly |
 |---|---|---|
@@ -32,7 +27,7 @@ The script uses sudo only for apt, and says so before it does. `chsh` asks for y
 | `starship` | starship into `~/.local/bin`, and its config | 10 MB |
 | `mise` | mise into `~/.local/bin`, its config, and the tools it lists (just fzf) | 90 MB |
 | `uv` | uv into `~/.local/bin` | 45 MB |
-| `dotfiles` | `.zshrc` and `.tmux.conf` | none |
+| `dotfiles` | `.zshrc`, `.tmux.conf`, and the Ghostty config on a Mac or wherever Ghostty is installed | none |
 | `ohmyzsh` | Oh My Zsh, unattended, keeping the managed `.zshrc` | 18 MB |
 | `shell` | `chsh` to zsh | none |
 | `fonts` | Nerd Fonts v3.4.0 into `~/.local/share/fonts/nerdfonts` (then `fc-cache`) or `~/Library/Fonts` | 19 MB, a 5 MB download |
@@ -52,9 +47,6 @@ mise use --path ~/.config/mise/conf.d/local.toml node@20
 
 Plain `mise use -g` would write into the managed config, which is a link into this repo.
 
-## What it cannot do
+## Not covered
 
-Some of the setup lives on the Mac I connect from, so the script cannot install it:
-
-- The Ghostty config, `~/.config/ghostty/config`. `export TERM=xterm-256color` in the managed `.zshrc` covers Ghostty's delete key over SSH.
-- The `vcode` bridge. Run its installer on the Mac from [`vcode-bridge/`](../vcode-bridge/); it also puts the `vcode` command on each host you pick.
+The `vcode` bridge has its own installer: run it on the Mac from [`vcode-bridge/`](../vcode-bridge/), and it puts the `vcode` command on each host you pick.
