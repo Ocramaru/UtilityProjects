@@ -1,0 +1,9 @@
+label = "vcode-bridge"
+binary_path = "~/Library/Application Support/VCode Bridge/vcode-bridge"
+config_path = "~/Library/Application Support/VCode Bridge/config.toml"
+plist = "~/Library/LaunchAgents/vcode-bridge.plist"
+logs = "~/Library/Logs"
+sockets = "/tmp/vcode-bridge-{uid}"
+ssh = "/usr/bin/ssh"
+code = "/usr/local/bin/code"
+health_timeout_seconds = 35

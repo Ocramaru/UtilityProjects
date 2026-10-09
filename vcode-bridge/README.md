@@ -1,115 +1,59 @@
 # VS Code SSH Bridge
 
-Run `vcode .` inside an SSH session to open the remote folder in VS Code on your Mac. The bridge uses Unix sockets and does not occupy a TCP port.
+Run `vcode .` in any SSH session and the folder opens in VS Code on your Mac, through Remote SSH. That includes a host you reached by hopping through another one: `ssh sparky`, then `ssh inner`, then `vcode .` on inner, and VS Code on the Mac connects straight to inner.
 
-A macOS background service maintains one SSH tunnel. Terminal sessions and VS Code windows use the same bridge without owning its connection. Closing a terminal or VS Code window leaves the bridge running. The service starts at login and retries disconnected tunnels automatically.
+One launch agent on the Mac keeps an SSH tunnel open to each host you install, and reconnects any that drop. Nothing listens on a TCP port, and your own SSH sessions never own a tunnel.
 
-## Requirements
+## Install
 
-- macOS with Go installed.
-- VS Code with the Remote SSH extension and `/usr/local/bin/code`. Install the CLI through **Shell Command: Install 'code' command in PATH** in VS Code.
-- An SSH host reachable from your Mac with unattended key authentication. The service uses `BatchMode=yes` and cannot prompt for passwords or key passphrases.
-- zsh and curl on the remote host for the `vcode` function below.
-- `StreamLocalBindUnlink yes` enabled on the remote SSH server.
-
-Use your SSH host name or alias wherever the examples use `mydevice`.
-
-## Setup
-
-### 1. Mac SSH configuration
-
-Use the SSH configuration that normally connects to your remote host. The bridge needs no additional `Host` settings. The selected host's effective configuration must not contain `RemoteForward`, `LocalForward`, or `DynamicForward` directives; the installer checks this because the service manages its own forwarding.
-
-`ControlMaster` defaults to `no`, so an explicit `ControlMaster no` line is unnecessary unless overriding another matching configuration section. The bridge service always disables connection sharing for its own tunnel. Ordinary SSH sessions follow your SSH configuration; if that configuration enables sharing, `ControlPath none` disables it for a host.
-
-### 2. Remote SSH server configuration
-
-On the remote host, enable socket replacement in the SSH server configuration:
-
-```text
-StreamLocalBindUnlink yes
-```
-
-On Ubuntu systems where `/etc/ssh/sshd_config` includes `/etc/ssh/sshd_config.d/*.conf`:
+On the Mac you need [uv](https://docs.astral.sh/uv/) (it fetches Python 3.15 by itself), Go, and VS Code with the Remote SSH extension and the `code` command (VS Code: **Shell Command: Install 'code' command in PATH**). Each host needs SSH key login from the Mac, plus bash and curl.
 
 ```bash
-echo 'StreamLocalBindUnlink yes' | sudo tee /etc/ssh/sshd_config.d/90-vcode-bridge.conf
-sudo sshd -t && sudo systemctl reload ssh
-sudo sshd -T | grep streamlocalbindunlink
+curl -fsSL https://raw.githubusercontent.com/Ocramaru/UtilityProjects/main/vcode-bridge/install.sh | bash -s -- sparky
 ```
 
-The final command should print `streamlocalbindunlink yes`. Some systems name the service `sshd` instead of `ssh`.
+`install.sh` downloads the latest version from GitHub every time and runs its installer, passing your arguments through. The installer:
 
-This server setting lets a reconnecting tunnel replace a socket left behind after a disconnect. It replaces the path whether or not its listener is active, so only one Mac bridge service may own a given remote user/socket. The bridge uses `/tmp/vcode-bridge-<remote-user>.sock`.
+1. Connects to the host once, so you can accept its key. If the Mac cannot reach it, it offers to add a `Host` block with `ProxyJump`, through one host or a chain like `sparky,inner`. A jump host the Mac cannot reach yet gets the same offer first, so any depth works.
+2. Adds `SetEnv LC_VCODE_BRIDGE=<this Mac's id>` to `~/.ssh/config` once, after asking.
+3. Copies the `vcode` command to `~/.local/bin/vcode` on the host, asking first unless an older copy of its own is already there.
+4. Builds the bridge, starts or reloads the launch agent, and waits until the host can reach the Mac.
 
-### 3. Install on your Mac
+Running it again for the same host is safe. Other options go after `bash -s --` the same way (`--help` lists them):
 
-From this directory:
+| Option | Does |
+|---|---|
+| `--list` | prints the installed hosts |
+| `--remove sparky` | stops serving one host |
+| `--update` | reinstalls every host when a newer version is out |
+| `--uninstall` | stops the service, deletes its files and logs, and removes the `SetEnv` block |
+| `--version` | prints the latest version and the installed one |
+| `-y`, `--yes` | answers yes to every prompt, so it runs without a terminal |
 
-```bash
-zsh ./install.zsh mydevice
+`--uninstall` asks before removing `vcode` from your hosts, since another Mac may still use it, and leaves `ProxyJump` blocks alone, since plain ssh uses them too.
+
+## Versions
+
+`VERSION` holds the current version. Bumping it on `main` is the release: `--update` compares it with the installed one and reinstalls when they differ. The installer stamps it into the bridge binary, the installed config and each host's `vcode`, so `vcode --version` on a host says which version it has.
+
+To try local changes before pushing them, run the installer straight from a checkout: `uv run --python 3.15 manage.py sparky`.
+
+## How it finds the right Mac
+
+Each Mac gets a random id on its first install. Its tunnel to a host forwards `/tmp/vcode-bridge-<user>-<id>.sock` there, and deletes a stale copy of its own socket before reconnecting, so no sshd setting or sudo is needed.
+
+ssh passes `LC_*` variables on through every hop, and Ubuntu's sshd accepts them by default, so `vcode` knows which Mac you came from even two hops in. If the variable does not arrive, `vcode` uses the one socket that answers, and asks you to set `LC_VCODE_BRIDGE` when more than one Mac is connected.
+
+Inside tmux, `vcode` reads the id from the tmux session instead of the pane, so a session you reattach from another Mac follows you. That needs one line in `~/.tmux.conf`:
+
+```tmux
+set -ga update-environment LC_VCODE_BRIDGE
 ```
 
-The installer builds the app, verifies SSH authentication and host trust interactively, and installs a launch agent that starts the service automatically. The service files live in `~/Library/Application Support/VCode Bridge`. Logs are written to `~/Library/Logs/vcode-bridge.log`.
+## Settings
 
-The installation supports one configured SSH host. A local lock prevents duplicate service instances from owning the same local socket.
+`config.toml` holds where the Mac side lives (binary, launch agent, logs, local sockets), the default `ssh` and `code` commands for new hosts, and how long installs wait for a host. The installed host list and the Mac's id are in `~/Library/Application Support/VCode Bridge/config.toml`; the agent reloads it within a second of a change. Logs are in `~/Library/Logs/vcode-bridge*.log`.
 
-### 4. Remote shell command
+## Checking a bridge
 
-Add this function to the remote host's `~/.zshrc`:
-
-```zsh
-vcode() {
-  emulate -L zsh
-  local target=${1:-.}
-  local remote_path=${target:A}
-  local bridge_socket="/tmp/vcode-bridge-${USER}.sock"
-  print -rn -- "$remote_path" |
-    curl --unix-socket "$bridge_socket" -fsS --max-time 5 --data-binary @- http://localhost/open
-}
-```
-
-Reload the shell configuration:
-
-```bash
-source ~/.zshrc
-```
-
-Use `vcode .` from any remote project directory, or `vcode /path/to/project`. The function sends the folder path through the socket to the Mac service, which opens it using VS Code Remote SSH.
-
-## Connection recovery
-
-The service retries failed tunnels with delays from one to 30 seconds. SSH keepalives detect an unresponsive connection, normally within about 45 seconds while the Mac is awake. Recovery resumes when the Mac and remote host are reachable and authentication succeeds. A bridge tunnel failure does not terminate ordinary SSH sessions, although `vcode` can fail temporarily during reconnection.
-
-Authentication failures require fixing the SSH credentials; retries cannot resolve those automatically.
-
-## Health checks
-
-On the remote host, check the complete connection to the Mac:
-
-```bash
-curl --unix-socket "/tmp/vcode-bridge-${USER}.sock" -fsS --max-time 5 http://localhost/health
-```
-
-A successful check returns no body. To inspect the remote listener:
-
-```bash
-ss -xlpn | grep -F "/tmp/vcode-bridge-${USER}.sock"
-```
-
-There should be one `LISTEN` entry for the bridge socket.
-
-On the Mac, check the local service:
-
-```bash
-curl --unix-socket "$HOME/Library/Application Support/VCode Bridge/vcode-bridge.sock" -fsS --max-time 5 http://localhost/health
-```
-
-The local check confirms that the Mac service responds; the remote check also verifies the SSH tunnel. Connection errors are recorded in `~/Library/Logs/vcode-bridge.log`.
-
-## Development
-
-```bash
-go test -race vcode_bridge.go vcode_bridge_test.go
-go build -o /tmp/vcode-bridge vcode_bridge.go
-```
+On the host, `vcode --healthy` checks that the Mac answers without opening anything; the installer runs it as its last step. `vcode .` prints `Opening <path> in VS Code`.

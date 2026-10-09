@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Opens a path on this host in VS Code on the Mac you connected from, through that Mac's vcode-bridge socket.
+# vcode --healthy only checks that the Mac answers, without opening anything.
+# Author: Marco Cassar (@Ocramaru)
+set -euo pipefail
+
+version="dev"  # the installer replaces dev with the release it installs
+
+healthy=""
+case "${1:-}" in
+  --version) echo "vcode-bridge $version"; exit ;;
+  --healthy) healthy=1; shift ;;
+esac
+prefix="/tmp/vcode-bridge-$(id -un)"
+
+# The Mac's ssh config sets LC_VCODE_BRIDGE, and ssh passes LC_* on through every hop.
+bridge_id="${LC_VCODE_BRIDGE:-}"
+
+# A tmux pane keeps the id from when it started; the session's copy follows the latest attach.
+if [[ -n "${TMUX:-}" ]]; then
+  session_value="$(tmux show-environment LC_VCODE_BRIDGE 2>/dev/null || true)"
+  case "$session_value" in
+    LC_VCODE_BRIDGE=*) bridge_id="${session_value#LC_VCODE_BRIDGE=}" ;;
+    -LC_VCODE_BRIDGE) bridge_id="" ;;
+  esac
+fi
+
+if [[ -n "$bridge_id" ]]; then
+  socket="$prefix-$bridge_id.sock"
+  [[ -S "$socket" ]] || { echo "vcode: the Mac you came from (bridge $bridge_id) is not connected to this host" >&2; exit 1; }
+else
+  socket=""
+  for candidate in "$prefix"-*.sock; do
+    curl --unix-socket "$candidate" -fsS --max-time 2 http://localhost/health >/dev/null 2>&1 || continue
+    [[ -z "$socket" ]] || { echo "vcode: more than one Mac is connected; set LC_VCODE_BRIDGE to pick one" >&2; exit 1; }
+    socket="$candidate"
+  done
+  [[ -n "$socket" ]] || { echo "vcode: no Mac bridge is connected to this host" >&2; exit 1; }
+fi
+
+if [[ -n "$healthy" ]]; then
+  curl --unix-socket "$socket" -fsS --max-time 5 http://localhost/health
+  echo "vcode: the Mac answers through $socket"
+  exit
+fi
+
+target="$(realpath -- "${1:-.}")"
+printf '%s' "$target" | curl --unix-socket "$socket" -fsS --max-time 5 --data-binary @- http://localhost/open
