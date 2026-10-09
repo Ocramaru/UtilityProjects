@@ -24,4 +24,4 @@ I created this to let me open an SSH project back in my VS Code instance using t
 
 ## [Device Terminal Setup](device-terminal-setup/)
 
-I kept rebuilding the same shell by hand every time I got a new machine, so this script does it for me: zsh, Oh My Zsh, starship, mise, uv, tmux and my Nerd Fonts, with the dotfiles symlinked back into this repo so a tweak on one machine shows up everywhere.
+I kept rebuilding the same shell by hand every time I got a new machine, so this script does it for me: zsh, Oh My Zsh, starship, mise, uv, tmux and my Nerd Fonts. One curl line sets up a machine, the same line updates it, and `--uninstall` puts it back the way it was.

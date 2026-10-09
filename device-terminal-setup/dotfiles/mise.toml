@@ -1,2 +1,6 @@
+# Managed by device-terminal-setup dev: updates replace everything above the "Your lines" line at the end
+
 [tools]
 fzf = "latest"
+
+# ---- Your lines: everything below here is kept on update ----

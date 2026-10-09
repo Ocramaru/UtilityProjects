@@ -2,7 +2,7 @@
 
 This is my terminal setup, packaged so a new machine matches the old one: zsh with Oh My Zsh and starship, mise, uv, tmux, the usual CLI tools, and the ComicShannsMono and Symbols Nerd Fonts. It runs on Ubuntu (aarch64 and x86_64) and on macOS through Homebrew. Anyone is welcome to use it; fork it first if you want to change the dotfiles.
 
-The files in `dotfiles/` are symlinked into place, so editing `~/.zshrc` edits the repo. Anything already in the way is moved to a numbered `.bak` first, never overwritten. Running it again leaves finished steps alone and says so.
+The files in `dotfiles/` are copied into place with the version in their first line. Anything already in the way is moved to a numbered `.bak` first, never overwritten. Running it again leaves finished steps alone and says so. Nothing of the repo stays on the machine: a run through curl downloads it to a temporary folder and deletes it afterwards.
 
 ## Running it
 
@@ -13,9 +13,23 @@ curl -fsSL https://raw.githubusercontent.com/Ocramaru/UtilityProjects/main/devic
 curl -fsSL https://raw.githubusercontent.com/Ocramaru/UtilityProjects/main/device-terminal-setup/install.sh | bash
 ```
 
-The first real run clones this repo to `~/UtilityProjects` (set `UTILITY_PROJECTS` to put it elsewhere) and runs from there, since the dotfiles link into it; keep the clone. Later runs use that clone, and `git pull` in it updates the dotfiles. It needs git, and on macOS [Homebrew](https://brew.sh). From an existing clone, `device-terminal-setup/install.sh` does the same.
+On macOS it needs [Homebrew](https://brew.sh). From a checkout, `device-terminal-setup/install.sh` does the same with the checkout's files. Options go after `bash -s --`:
 
-Options go after `bash -s --`: `--skip mise,fonts` leaves components out, `--only fonts` installs just those, and `--dry-run` lists every command without running it. The script uses sudo only for apt, and says so before it does. `chsh` asks for your password if the login shell is not zsh yet.
+| Option | Does |
+|---|---|
+| `--dry-run` | lists every command it would run, and changes nothing |
+| `--skip mise,fonts` | leaves those components out |
+| `--only fonts` | acts on just those components |
+| `--uninstall` | removes what the install added, for the chosen components |
+| `--version` | prints this version and the installed one |
+
+The script uses sudo only for apt and, where sudo needs no password, to change the login shell; it says so before it does.
+
+## Updating and uninstalling
+
+Running the curl line again updates a machine: managed dotfiles from an older version are replaced, and anything already current is left alone. Each managed file ends with a `# ---- Your lines: everything below here is kept on update ----` line. Add your own lines below it and updates keep them; anything above it is replaced.
+
+`--uninstall` removes only what the install added. It deletes the managed dotfiles, or moves one aside if you added lines below its "Your lines" line, and puts back the files it moved aside, and removes the tools, Oh My Zsh and fonts it installed and the login shell it changed, all from a record it keeps in `~/.local/state/device-terminal-setup/`. Anything that was there before, the apt and Homebrew packages, and the local files are left alone.
 
 ## Components
 
@@ -37,7 +51,7 @@ Everything together is about 270 MB, and most of that is mise, uv and the apt pa
 
 ## Machine-specific lines
 
-The managed `.zshrc` sources `~/.zshrc.local` if it exists. Anything that belongs to one machine goes there, such as a ROS `source` line or a project's environment variables, and so do secrets like API keys. The script never creates or edits it, and it never ends up in the repo.
+Lines below the "Your lines" line in any managed file stay on that machine. For `.zshrc` there is also `~/.zshrc.local`, which the managed `.zshrc` sources if it exists. Anything that belongs to one machine can go in either, such as a ROS `source` line or a project's environment variables, and so do secrets like API keys. Neither ever ends up in the repo, and the script never touches `~/.zshrc.local`.
 
 mise works the same way: tools for one machine go in `~/.config/mise/conf.d/local.toml`, which mise reads alongside the managed config. Node is not installed by default; to add it on a machine that needs it:
 
@@ -45,7 +59,7 @@ mise works the same way: tools for one machine go in `~/.config/mise/conf.d/loca
 mise use --path ~/.config/mise/conf.d/local.toml node@20
 ```
 
-Plain `mise use -g` would write into the managed config, which is a link into this repo.
+Plain `mise use -g` would write into the managed config, which the next update replaces.
 
 ## Not covered
 

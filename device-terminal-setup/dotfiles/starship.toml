@@ -1,3 +1,5 @@
+# Managed by device-terminal-setup dev: updates replace everything above the "Your lines" line at the end
+
 "$schema" = 'https://starship.rs/config-schema.json'
 
 [username]
@@ -322,3 +324,4 @@ symbol = " "
 [zig]
 symbol = " "
 
+# ---- Your lines: everything below here is kept on update ----
