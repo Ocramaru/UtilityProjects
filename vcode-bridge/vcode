@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Opens a path on this host in VS Code on the Mac you connected from, through that Mac's vcode-bridge socket.
-# vcode --healthy only checks that the Mac answers, without opening anything.
+# Opens a path on this host in VS Code on the Mac you connected from.
+# The request travels back through this SSH session's agent channel, which ~/.ssh/config on the Mac points at vcode-bridge.
 # Author: Marco Cassar (@Ocramaru)
 set -euo pipefail
 
@@ -22,39 +22,62 @@ case "${1:-}" in
   --) shift ;;
   -*) echo "vcode: unknown option $1 (see vcode --help)" >&2; exit 2 ;;
 esac
-if [[ -z "$healthy" && ! -e "${1:-.}" ]]; then echo "vcode: no such file or folder: ${1:-.}" >&2; exit 1; fi
-prefix="/tmp/vcode-bridge-$(id -un)"
+if [[ $# -gt 1 || ( -n "$healthy" && $# -gt 0 ) ]]; then usage >&2; exit 2; fi
+target="${1:-.}"
+if [[ "$target" == *[[:cntrl:]]* ]]; then echo "vcode: paths with control characters cannot be opened" >&2; exit 1; fi
+if [[ -z "$healthy" && ! -e "$target" ]]; then echo "vcode: no such file or folder: $target" >&2; exit 1; fi
 
-# The Mac's ssh config sets LC_VCODE_BRIDGE, and ssh passes LC_* on through every hop.
-bridge_id="${LC_VCODE_BRIDGE:-}"
-
-# A tmux pane keeps the id from when it started; the session's copy follows the latest attach.
+# A tmux pane keeps the environment it started with; tmux's session copy follows the latest attach.
+socket="${SSH_AUTH_SOCK:-}"
 if [[ -n "${TMUX:-}" ]]; then
-  session_value="$(tmux show-environment LC_VCODE_BRIDGE 2>/dev/null || true)"
-  case "$session_value" in
-    LC_VCODE_BRIDGE=*) bridge_id="${session_value#LC_VCODE_BRIDGE=}" ;;
-    -LC_VCODE_BRIDGE) bridge_id="" ;;
+  session="$(tmux show-environment SSH_AUTH_SOCK 2>/dev/null || true)"
+  case "$session" in
+    SSH_AUTH_SOCK=*) socket="${session#SSH_AUTH_SOCK=}" ;;
+    -SSH_AUTH_SOCK) socket="" ;;
   esac
 fi
+if [[ ! -S "$socket" ]]; then echo "vcode: this session has no agent channel; ssh in from a Mac with vcode-bridge installed for this host" >&2; exit 1; fi
 
-if [[ -n "$bridge_id" ]]; then
-  socket="$prefix-$bridge_id.sock"
-  [[ -S "$socket" ]] || { echo "vcode: the Mac you came from (bridge $bridge_id) is not connected to this host" >&2; exit 1; }
-else
-  socket=""
-  for candidate in "$prefix"-*.sock; do
-    curl --unix-socket "$candidate" -fsS --max-time 2 http://localhost/health >/dev/null 2>&1 || continue
-    [[ -z "$socket" ]] || { echo "vcode: more than one Mac is connected; set LC_VCODE_BRIDGE to pick one" >&2; exit 1; }
-    socket="$candidate"
-  done
-  [[ -n "$socket" ]] || { echo "vcode: no Mac bridge is connected to this host" >&2; exit 1; }
-fi
+# This host's own keys let the Mac notice a hop that forwarded without saying which host it reached.
+host_keys="$(cat /etc/ssh/ssh_host_*_key.pub 2>/dev/null | cut -d ' ' -f 2 | tr '\n' ' ' || true)"
+headers="$(mktemp)" body="$(mktemp)"
+trap 'rm -f "$headers" "$body"' EXIT
+
+# Every reply carries the Mac's version; a newer one replaces this copy with the Mac's.
+update() {
+  local mac_version self
+  mac_version="$(tr -d '\r' < "$headers" | sed -n 's/^X-Vcode-Bridge-Version: //p' | tail -n 1)"
+  [[ -n "$mac_version" && "$mac_version" != dev && "$version" != dev && "$mac_version" != "$version" ]] || return 0
+  [[ "$(printf '%s\n' "$version" "$mac_version" | sort -V | tail -n 1)" == "$mac_version" ]] || return 0
+  self="$(realpath "${BASH_SOURCE[0]}")"
+  [[ -w "$(dirname "$self")" ]] || return 0
+  if curl --unix-socket "$socket" -fsS --max-time 5 -o "$self.new" http://localhost/vcode && grep -qF "version=\"$mac_version\"" "$self.new" && bash -n "$self.new"; then
+    chmod 755 "$self.new"
+    mv "$self.new" "$self"
+    echo "vcode: updated to $mac_version"
+  else
+    rm -f "$self.new"
+  fi
+}
+
+# Sends one request to the Mac and prints its reply, or its error message.
+send() {
+  local status
+  if ! status="$(curl --unix-socket "$socket" -s --max-time 5 -H "X-Vcode-Host-Keys: $host_keys" -D "$headers" -o "$body" -w '%{http_code}' "$@")"; then
+    echo "vcode: vcode-bridge does not answer on $socket: this session came from a Mac without it for this host, or its service is not running" >&2
+    exit 1
+  fi
+  update
+  if [[ "$status" != 2* ]]; then echo "vcode: $(cat "$body")" >&2; exit 1; fi
+  cat "$body"
+}
 
 if [[ -n "$healthy" ]]; then
-  curl --unix-socket "$socket" -fsS --max-time 5 http://localhost/health
+  send http://localhost/health
   echo "vcode: the Mac answers through $socket"
-  exit
+else
+  [[ "$target" == /* ]] || target="./$target"  # BusyBox realpath takes -- as a path
+  path="$(realpath "$target")"
+  if [[ -d "$path" && "$path" != */ ]]; then path+="/"; fi  # VS Code opens a trailing slash as a folder
+  printf '%s' "$path" | send --data-binary @- http://localhost/open
 fi
-
-target="$(realpath -- "${1:-.}")"
-printf '%s' "$target" | curl --unix-socket "$socket" -fsS --max-time 5 --data-binary @- http://localhost/open
