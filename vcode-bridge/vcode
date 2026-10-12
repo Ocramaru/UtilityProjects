@@ -6,11 +6,23 @@ set -euo pipefail
 
 version="dev"  # the installer replaces dev with the release it installs
 
+usage() {
+  cat <<EOF
+usage: vcode [PATH]     open PATH (default: the current folder) in VS Code on the Mac you connected from
+       vcode --healthy  check that the Mac answers, without opening anything
+       vcode --version  print the installed version
+EOF
+}
+
 healthy=""
 case "${1:-}" in
+  -h|--help) usage; exit ;;
   --version) echo "vcode-bridge $version"; exit ;;
   --healthy) healthy=1; shift ;;
+  --) shift ;;
+  -*) echo "vcode: unknown option $1 (see vcode --help)" >&2; exit 2 ;;
 esac
+if [[ -z "$healthy" && ! -e "${1:-.}" ]]; then echo "vcode: no such file or folder: ${1:-.}" >&2; exit 1; fi
 prefix="/tmp/vcode-bridge-$(id -un)"
 
 # The Mac's ssh config sets LC_VCODE_BRIDGE, and ssh passes LC_* on through every hop.

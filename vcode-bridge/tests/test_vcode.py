@@ -95,3 +95,12 @@ def test_tmux_follows_the_mac_of_the_latest_attach(mac, tmp_path):
     assert bridge.opened == [str(tmp_path.resolve())]
   finally:
     subprocess.run(["tmux", "-L", server, "kill-server"], check=False)
+
+
+def test_options_are_never_taken_for_a_path(mac):
+  _, bridge = mac
+  assert "usage: vcode" in run_vcode("--help").stdout
+  assert run_vcode("--nope").returncode == 2
+  missing = run_vcode("/no/such/folder")
+  assert missing.returncode == 1 and "no such file or folder" in missing.stderr
+  assert bridge.opened == []
